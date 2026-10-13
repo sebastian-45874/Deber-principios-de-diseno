@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Northwind</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 30px auto; max-width: 1100px; padding: 0 16px; color: #222; }
+        h1 { font-size: 28px; }
+        button { padding: 10px 14px; margin: 0 6px 8px 0; cursor: pointer; border: 1px solid #aaa; border-radius: 4px; background: #eee; }
+        button:hover { background: #ddd; }
+        button:disabled { cursor: wait; opacity: .5; }
+        .tiempos { padding: 12px; background: #f3f3f3; line-height: 1.9; margin: 12px 0; }
+        #mensaje { min-height: 20px; }
+        .tabla { overflow: auto; max-height: 500px; border: 1px solid #ddd; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 9px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { position: sticky; top: 0; background: #eee; }
+        small { color: #555; }
+    </style>
+</head>
+<body>
+    <h1>Northwind</h1>
+    <button onclick="consultar(false)">Consultar sin caché</button>
+    <button onclick="consultar(true)">Consultar con caché</button>
+    <button onclick="limpiar()">Limpiar caché</button>
+
+    <div class="tiempos">
+        Sin caché: <strong id="sinCache">—</strong><br>
+        Con caché: <strong id="conCache">—</strong> <span id="origen"></span><br>
+        Registros: <strong id="total">0</strong><br>
+        <span id="diferencia">Consulta las dos opciones para comparar.</span>
+    </div>
+    <small>La primera consulta con caché carga los datos. Vuelve a pulsarla para leer desde memoria.
+    Los tiempos miden la lectura en el servidor, sin incluir el dibujo de la tabla.</small>
+    <p id="mensaje" role="status">Listo para consultar.</p>
+    <div class="tabla">
+        <table>
+            <thead><tr><th>Pedido</th><th>Cliente</th><th>Fecha</th><th>Producto</th><th>Cantidad</th><th>Importe</th></tr></thead>
+            <tbody id="filas"></tbody>
+        </table>
+    </div>
+    <script>
+        const api = location.port === '5500' ? 'http://127.0.0.1:8080/api' : '/api';
+        let tiempoSin = null;
+        let tiempoCon = null;
+
+        function ocupado(valor) {
+            document.querySelectorAll('button').forEach(boton => boton.disabled = valor);
+        }
+
+        function comparar() {
+            const texto = document.getElementById('diferencia');
+            if (tiempoSin === null || tiempoCon === null) {
+                texto.textContent = 'Consulta sin caché y después desde memoria para comparar.';
+            } else {
+                const diferencia = tiempoSin - tiempoCon;
+                texto.textContent = 'La lectura desde memoria tardó ' +
+                    Math.abs(diferencia).toFixed(3) + ' ms ' +
+                    (diferencia >= 0 ? 'menos' : 'más') + ' que la última consulta sin caché.';
+            }
+        }
+
+        async function consultar(cache) {
+            ocupado(true);
+            document.getElementById('mensaje').textContent = 'Consultando...';
+            try {
+                const respuesta = await fetch(api + '/pedidos?cache=' + cache, {signal: AbortSignal.timeout(60000)});
+                if (!respuesta.ok) throw new Error('No se pudo consultar Northwind. Revisa que la aplicación esté ejecutándose.');
+                const resultado = await respuesta.json();
+                document.getElementById(cache ? 'conCache' : 'sinCache').textContent = resultado.tiempo.toFixed(3) + ' ms';
+                document.getElementById('total').textContent = resultado.total;
+                if (cache) {
+                    document.getElementById('origen').textContent = '(' + resultado.origen + ')';
+                    tiempoCon = resultado.origen === 'Memoria' ? resultado.tiempo : null;
+                } else {
+                    tiempoSin = resultado.tiempo;
+                }
+                comparar();
+
+                const filas = document.createDocumentFragment();
+                resultado.datos.forEach(pedido => {
+                    const fila = document.createElement('tr');
+                    ['pedido', 'cliente', 'fecha', 'producto', 'cantidad', 'importe'].forEach(campo => {
+                        const celda = document.createElement('td');
+                        celda.textContent = pedido[campo] ?? '';
+                        fila.appendChild(celda);
+                    });
+                    filas.appendChild(fila);
+                });
+                document.getElementById('filas').replaceChildren(filas);
+                document.getElementById('mensaje').textContent = 'Datos leídos de: ' + resultado.origen + '.';
+            } catch (error) {
+                document.getElementById('mensaje').textContent = error.message;
+            } finally {
+                ocupado(false);
+            }
+        }
+
+        async function limpiar() {
+            ocupado(true);
+            try {
+                const respuesta = await fetch(api + '/cache', {method: 'DELETE', signal: AbortSignal.timeout(10000)});
+                if (!respuesta.ok) throw new Error('No se pudo limpiar la caché.');
+                tiempoCon = null;
+                document.getElementById('conCache').textContent = '—';
+                document.getElementById('origen').textContent = '';
+                comparar();
+                document.getElementById('mensaje').textContent = 'Caché vaciada. La próxima consulta leerá la base de datos.';
+            } catch (error) {
+                document.getElementById('mensaje').textContent = error.message;
+            } finally {
+                ocupado(false);
+            }
+        }
+    </script>
+</body>
+</html>
